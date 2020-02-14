@@ -5,14 +5,15 @@
 #include <NvOnnxParser.h>
 
 #include <cuda_runtime_api.h>
+#include <unistd.h>
 
 using namespace std;
 using namespace nvinfer1;
 
 const int MAXBATCHSIZE = 4;
-const char* INPUT_BLOB_NAME = "input.1";
-const char* OUTPUT_BLOB_NAME = "36";
-const char* ONNX_FILE = "../model/alexnet.onnx";
+const char* INPUT_BLOB_NAME = "input";
+const char* OUTPUT_BLOB_NAME = "output";
+const char* ONNX_FILE = "../model/sample.onnx";
 const char* image_name = "dog.jpg";
 
 class Logger:public ILogger {
@@ -62,7 +63,8 @@ int prepare_inference(ICudaEngine* engine, IExecutionContext ** network_context,
 
     *inputIndex = engine->getBindingIndex(INPUT_BLOB_NAME);
     *outputIndex = engine->getBindingIndex(OUTPUT_BLOB_NAME);
-	std::cout << "Input: " << *inputIndex << ", Output: " << *outputIndex << endl;
+	int num = engine->getNbBindings();
+	std::cout << "Input: " << *inputIndex << ", Output: " << *outputIndex << ", Num: " << num << endl;
    
 	*network_context = context;
 	return 0;
@@ -72,39 +74,47 @@ int image_file_read(const char* image_name, Dims& dims, void** image_buffer){
 	int size = dims.d[1] * dims.d[2] * dims.d[3];
     float* image = new float[size];
 	for(int i = 0; i < size; i++){
-		image[i] = 1;
+		image[i] = 1; ///(i+1);
 	}
     // cuda operate
-	cudaMalloc(image_buffer, size*sizeof(float));
-    cudaMemcpy(image_buffer, image, size*sizeof(float), cudaMemcpyHostToDevice);
+	void* buffer = nullptr;
+	cudaMalloc(&buffer, size*sizeof(float));
+    cudaMemcpy(&buffer, image, size*sizeof(float), cudaMemcpyHostToDevice);
+	*image_buffer = buffer;
 
     return 0;
 }
 
 int do_inference(IExecutionContext* context, Dims& outputDims, void* image_buffer, int& inputIndex, int& outputIndex, void** out_buffer){
-	int size = outputDims.d[0] * outputDims.d[1];
+	int size = 1; //outputDims.d[1];
     void* res_buffer = nullptr;
 	//cudaMalloc(&res_buffer, size*sizeof(float));
 	cudaError_t ret = cudaMalloc(&res_buffer, size*sizeof(float));
     if(ret != cudaSuccess){
 		cerr << "cuda Malloc error, errorcode: " << ret << endl;
 	}
-	void *buffer[2];
-	buffer[inputIndex] = image_buffer;
-    buffer[outputIndex] = res_buffer;
-    
-	context->executeV2(buffer);
+	
+	//void *buffer[2];
+	//buffer[0] = image_buffer;
+    //buffer[1] = res_buffer;
+	//context->executeV2(buffer);
+   	std::vector<void*> buffer(2);
+	buffer[0] = image_buffer;
+	buffer[1] = res_buffer; 
+	context->executeV2(buffer.data());
 
-	void *output_buffer = (void *)new float[size];
+	usleep(10*1000);
+
+	float *output_buffer = new float[size];
     cudaMemcpy(output_buffer, res_buffer, size*sizeof(float), cudaMemcpyDeviceToHost);
 	*out_buffer = output_buffer;
     cout << "do inference finish" << endl;
-	
+	printf("Result: %f\n", *output_buffer);
     return 0;
 }
 
 int inference_res_show(void* output_buffer, Dims& outputDims){
-	int size = outputDims.d[0] * outputDims.d[1];
+	int size = 1; //outputDims.d[1];
     float *buffer = (float*)output_buffer;
 	for(int i = 0; i < size; i++){
 		cout << buffer[i] << ", ";
